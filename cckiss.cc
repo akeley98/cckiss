@@ -6,6 +6,7 @@
 #include <set>
 #include <stdio.h>
 #include <stdexcept>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -39,6 +40,8 @@ struct Args
 
     // Makefile CARGS or CXXARGS
     std::vector<std::string> cxxargs;
+
+    bool verbose;
 };
 
 using ArgsRef = const Args&;
@@ -602,7 +605,7 @@ void make_deps_file_from_fd(ArgsRef args, int fd)
                 args, line_text, line_number, &dependency_file_name);
         if (was_dependency_line) {
             auto pair = deps_set.insert(dependency_file_name);
-            if (pair.second) {
+            if (pair.second && args.verbose) {
                 printf("    %s:%li\n    \"%s\"\n",
                     args.preprocessed_file_name.c_str(),
                     line_number,
@@ -663,9 +666,9 @@ retry_rename:
     }
 }
 
-// Use execvp (replaces current process) to compile the source file to
-// the target file. Detect assembly or object file based on extension, and
-// add -S or -c argument as appropriate.
+// Use execvp (replaces current process) to compile the preprocessed
+// source file to the target file. Detect assembly or object file
+// based on extension, and add -S or -c argument as appropriate.
 void exec_compile_to_target(ArgsRef args)
 {
     const char* cxx_arg = args.cxx.c_str();
@@ -674,7 +677,7 @@ void exec_compile_to_target(ArgsRef args)
     for (const auto& arg : args.cxxargs) {
         argv.push_back(arg.c_str());
     }
-    argv.push_back(args.source_file_name.c_str());
+    argv.push_back(args.preprocessed_file_name.c_str());
 
     // Just check the last character -- more thorough checking was
     // done during arg parsing.
@@ -729,6 +732,9 @@ int main(int argc, char** argv)
     std::string delims = cxxargs_delim + " " + cppargs_delim + " " + cxx_delim;
 
     Args args;
+
+    const char* verbose_str = getenv("VERBOSE");
+    args.verbose = verbose_str != nullptr && atoll(verbose_str) != 0;
 
     constexpr int cxxargs_mode = 0, cppargs_mode = 1, cxx_mode = 2;
     int mode = cxx_mode;

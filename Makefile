@@ -1,8 +1,8 @@
-cckiss/run : cckiss.cc
-	$(CXX) -std=c++14 -O2 -Wall -Wextra cckiss.cc -o cckiss/run
+cckiss/run : cckiss/cckiss.cc
+	$(CXX) -std=c++14 -O2 -Wall -Wextra cckiss/cckiss.cc -o cckiss/run
 
 .cckiss.PHONY :
-	echo "cckiss.PHONY"
+	@echo -n ""
 
 cckiss/make-B-hack:
 	touch cckiss/make-B-hack
@@ -18,3 +18,6 @@ cckiss/%.s : .cckiss.PHONY cckiss/run cckiss/make-B-hack
 
 cckiss/%.o : .cckiss.PHONY cckiss/run cckiss/make-B-hack
 	cckiss/run $@ $(CXX) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CXXARGS)
+
+cckiss/Makefile:
+	@echo -n ""
