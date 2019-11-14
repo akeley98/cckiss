@@ -66,6 +66,114 @@ bool file_exists_mtim(const std::string& name, struct timespec *timespec)
     return true;
 }
 
+// Given the name of a target file (compiled object/assembly file),
+// return the name of the corresponding source file. Example:
+// "cckiss/pear/util.cc.s" -> "pear/util.cc".
+std::string source_file_name_from_target(const std::string& compiled_file_name)
+{
+    // Need to recover the name of the source file for the given
+    // target (compiled) file. Expect compiled_file_name =
+    // "cckiss/{source/file}.[s|o]"
+    std::string source_file_name;
+    size_t sz;
+    const char* skipped_prefix = skip_prefix(
+        compiled_file_name.c_str(),
+        "cckiss/");
+    if (!skipped_prefix) goto bad_file_name;
+
+    // Now source_file_name = {source/file}.[s|o] Remove the .s or .o
+    source_file_name = std::string(skipped_prefix);
+    sz = source_file_name.size();
+    if (sz <= 2) goto bad_file_name;
+    if (source_file_name[sz-1] != 's' && source_file_name[sz-1] != 'o') {
+        goto bad_file_name;
+    }
+    if (source_file_name[sz-2] != '.') goto bad_file_name;
+    source_file_name.pop_back();
+    source_file_name.pop_back();
+    return source_file_name;
+
+bad_file_name:
+    printf(
+        "Expected target (compiled) file name to be of the form "
+        "cckiss/{path/to/source/file}.[s|o]. Got: \"%s\".\n",
+        compiled_file_name.c_str());
+    fprintf(
+        stderr,
+        "Expected target (compiled) file name to be of the form "
+        "cckiss/{path/to/source/file}.[s|o]. Got: \"%s\".\n",
+        compiled_file_name.c_str());
+    exit(1);
+}
+
+// Given the name of a source file, return the expected filename of
+// its dependencies file (which was created by cckiss based on scanning
+// the source file post-preprocessing)
+std::string deps_file_name_for_source(
+    const std::string& source_file_name)
+{
+    return "cckiss/" + source_file_name + "-deps.txt";
+}
+
+// Given the name of a source file, return the expected filename of
+// its corresponding preprocessed file.
+std::string preprocessed_file_name_for_source(
+    const std::string& source_file_name)
+{
+    // C files must become .i files -- the only file extension I know
+    // of for C is lowercase '.c'. All others are assumed to be C++,
+    // with .ii extension once preprocessed.
+    auto sz = source_file_name.size();
+    bool is_c = false;
+    if (sz >= 2 && source_file_name[sz-2]=='.' && source_file_name[sz-1]=='c') {
+        is_c = true;
+    }
+    return "cckiss/" + source_file_name + (is_c ? ".i" : ".ii");
+}
+
+// The cckiss/ directory contains a replica of the source directory
+// tree (e.g. if we are compiling foo/bar/barf.c, the cckiss files
+// generated for it -- barf.c.i, barf.c-deps.txt, barf.c.s -- are
+// stored in cckiss/foo/bar/).
+//
+// This function ensures that the needed directories in cckiss/ are
+// created for the named source file.
+void make_directory_tree_for_source(
+    const std::string& source_file_name)
+{
+    // Slowly copy `source_file_name` to `directory_to_create`,
+    // pausing at each '/' to create the directory.
+    std::string directory_to_create = "cckiss/";
+    const char* pathname = "";
+    for (char c : source_file_name) {
+        directory_to_create += c;
+        if (c == '/') {
+            pathname = directory_to_create.c_str();
+            int return_code = mkdir(pathname, 0777);
+            bool eexist = (errno == EEXIST);
+            if (return_code < 0 && !eexist) {
+                goto fail;
+            }
+            if (eexist) {
+                struct stat statbuf;
+                return_code = stat(pathname, &statbuf);
+                if (return_code < 0) goto fail;
+                if (!S_ISDIR(statbuf.st_mode)) {
+                    errno = EISDIR;
+                    goto fail;
+                }
+            } else {
+                printf("Created directory \"%s\".\n", pathname);
+            }
+        }
+    }
+    return;
+fail:
+    printf("Failed to create \"%s\": %s\n", pathname, strerror(errno));
+    fprintf(stderr, "Failed to create \"%s\": %s\n", pathname, strerror(errno));
+    exit(1);
+}
+
 // Read the dependency file correspoding to the named source file, and
 // return a vector of dependency file names within (newline separated
 // in deps file).  If the dependency file doesn't yet exist, the
@@ -76,7 +184,7 @@ std::vector<std::string> get_deps_for_source(
     const std::string& source_file_name)
 {
     std::vector<std::string> deps;
-    std::string deps_file_name = "cckiss/deps/" + source_file_name + ".txt";
+    std::string deps_file_name = deps_file_name_for_source(source_file_name);
 
     std::ifstream stream(deps_file_name);
     if (!stream.is_open()) {
@@ -141,7 +249,7 @@ std::vector<std::string> get_deps_for_source(
 }
 
 // Given the name of a target file (compiled object/assembly file in
-// cckiss/asm/), return true if we should recompile it. This is the
+// cckiss/), return true if we should recompile it. This is the
 // case if any of the following hold:
 //
 // 1. Target file doesn't yet exist.
@@ -154,33 +262,14 @@ std::vector<std::string> get_deps_for_source(
 // 4. Said dependency file does not exist.
 bool should_recompile_named_file(const std::string& compiled_file_name)
 {
-    // These vars are all up here because of the goto (maybe that should be
-    // a helper function instead or something...)
+    // Deduce the source file that gets compiled to the named target file.
+    std::string source_file_name =
+        source_file_name_from_target(compiled_file_name);
+
     struct timespec target_mtim;
     struct stat statbuf;
-    size_t sz = 0;
     int return_code = 0;
     bool compiled_file_exists = false;
-
-    // Need to recover the name of the source file for the given
-    // target (compiled) file. Expect compiled_file_name =
-    // "cckiss/asm/{source/file}.[s|o]"
-    std::string source_file_name;
-    const char* skipped_prefix = skip_prefix(
-        compiled_file_name.c_str(),
-        "cckiss/asm/");
-    if (!skipped_prefix) goto bad_file_name;
-
-    // Now source_file_name = {source/file}.[s|o] Remove the .s or .o
-    source_file_name = std::string(skipped_prefix);
-    sz = source_file_name.size();
-    if (sz <= 2) goto bad_file_name;
-    if (source_file_name[sz-1] != 's' && source_file_name[sz-1] != 'o') {
-        goto bad_file_name;
-    }
-    if (source_file_name[sz-2] != '.') goto bad_file_name;
-    source_file_name.pop_back();
-    source_file_name.pop_back();
 
     // Now we extracted the source file name from the target file
     // name, and we just have to see if either the source file or any
@@ -224,7 +313,7 @@ bool should_recompile_named_file(const std::string& compiled_file_name)
         for (const std::string& dep_file_name : deps_file_names) {
             bool dep_exists = file_exists_mtim(dep_file_name, &dep_mtim);
             if (!dep_exists) {
-                printf("Missing \"%s\", originally needed by \"%s\".\n",
+                printf("Missing \"%s\", possibly needed by \"%s\".\n",
                     dep_file_name.c_str(),
                     compiled_file_name.c_str());
                 return true;
@@ -241,22 +330,25 @@ bool should_recompile_named_file(const std::string& compiled_file_name)
         // No dependency changes detected at this point.
         return false;
     }
+}
 
-bad_file_name:
-    printf(
-        "Expected target (compiled) file name to be of the form\n"
-        "cckiss/asm/{path/to/source/file}.[s|o]. Got:\n\"%s\".",
-        compiled_file_name.c_str());
-    fprintf(
-        stderr,
-        "Expected target (compiled) file name to be of the form\n"
-        "cckiss/asm/{path/to/source/file}.[s|o]. Got:\n\"%s\".",
-        compiled_file_name.c_str());
-    exit(1);
+// Given the name of a source file, preprocess it (storing the
+// preprocessed file under the corresponding directory in "cckiss/"),
+// and scan the preprocessed file for dependency file names (storing
+// the deps file in "cckiss/").
+void preprocess_and_make_deps_file(const std::string& source_file_name)
+{
+    std::string deps_file_name = deps_file_name_for_source(source_file_name);
+    std::string preprocessed_file_name =
+        preprocessed_file_name_for_source(source_file_name);
+
+    make_directory_tree_for_source(source_file_name);
 }
 
 int cckiss_main(std::vector<std::string> args)
 {
+    make_directory_tree_for_source(source_file_name_from_target(args[1]));
+
     bool b = should_recompile_named_file(args[1]);
     printf("%s\n", b ? "yes" : "no");
 
