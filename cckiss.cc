@@ -1,10 +1,14 @@
 #include <assert.h>
+#include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <fstream>
+#include <set>
 #include <stdio.h>
 #include <stdexcept>
-#include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <string>
 #include <string.h>
 #include <unistd.h>
@@ -12,6 +16,32 @@
 #include <vector>
 
 namespace {
+
+struct Args
+{
+    // Name of compiled file.
+    std::string target_file_name;
+
+    // Name of the source file compiled to target file.
+    std::string source_file_name;
+
+    // Name of the file preprocessor output for the source file is written to.
+    std::string preprocessed_file_name;
+
+    // Name of the dependencies file scanned from the preprocessed file.
+    std::string deps_file_name;
+
+    // Makefile CC or CXX
+    std::string cxx;
+
+    // Makefile CPPARGS
+    std::vector<std::string> cppargs;
+
+    // Makefile CARGS or CXXARGS
+    std::vector<std::string> cxxargs;
+};
+
+using ArgsRef = const Args&;
 
 // Arguably evil, but allow timespecs to be compared like ordinary
 // darn numbers.
@@ -59,7 +89,9 @@ bool file_exists_mtim(const std::string& name, struct timespec *timespec)
         // Unix stupidity:
         if (errno == EINTR && tries < max_tries) continue;
 
-        printf("Could not access \"%s\": %s\n", name.c_str(), strerror(errno));
+        const char* msg = strerror(errno);
+        printf("Could not access \"%s\": %s\n", name.c_str(), msg);
+        fprintf(stderr, "Could not access \"%s\": %s\n", name.c_str(), msg);
         exit(1);
     }
     *timespec = statbuf.st_mtim;
@@ -138,8 +170,7 @@ std::string preprocessed_file_name_for_source(
 //
 // This function ensures that the needed directories in cckiss/ are
 // created for the named source file.
-void make_directory_tree_for_source(
-    const std::string& source_file_name)
+void make_directory_tree_for_source(const std::string& source_file_name)
 {
     // Slowly copy `source_file_name` to `directory_to_create`,
     // pausing at each '/' to create the directory.
@@ -155,9 +186,13 @@ void make_directory_tree_for_source(
                 goto fail;
             }
             if (eexist) {
+            retry:
                 struct stat statbuf;
                 return_code = stat(pathname, &statbuf);
-                if (return_code < 0) goto fail;
+                if (return_code < 0) {
+                    if (errno == EINTR) goto retry;
+                    else goto fail;
+                }
                 if (!S_ISDIR(statbuf.st_mode)) {
                     errno = EISDIR;
                     goto fail;
@@ -169,22 +204,23 @@ void make_directory_tree_for_source(
     }
     return;
 fail:
-    printf("Failed to create \"%s\": %s\n", pathname, strerror(errno));
-    fprintf(stderr, "Failed to create \"%s\": %s\n", pathname, strerror(errno));
+    const char* msg = strerror(errno);
+    printf("Failed to create \"%s\": %s\n", pathname, msg);
+    fprintf(stderr, "Failed to create \"%s\": %s\n", pathname, msg);
     exit(1);
 }
 
-// Read the dependency file correspoding to the named source file, and
+// Read the dependency file correspoding to the arg's source file, and
 // return a vector of dependency file names within (newline separated
 // in deps file).  If the dependency file doesn't yet exist, the
 // dependency file itself is returned as the only dependency (bit of a
 // hack). If the dependency file cannot be read for any other reason,
 // terminate.
-std::vector<std::string> get_deps_for_source(
-    const std::string& source_file_name)
+std::vector<std::string> get_deps_for_source(ArgsRef args)
 {
     std::vector<std::string> deps;
-    std::string deps_file_name = deps_file_name_for_source(source_file_name);
+    auto& source_file_name = args.source_file_name;
+    auto& deps_file_name = args.deps_file_name;
 
     std::ifstream stream(deps_file_name);
     if (!stream.is_open()) {
@@ -248,9 +284,9 @@ std::vector<std::string> get_deps_for_source(
     } while (1);
 }
 
-// Given the name of a target file (compiled object/assembly file in
-// cckiss/), return true if we should recompile it. This is the
-// case if any of the following hold:
+// Look at args for the name of the target file (compiled
+// object/assembly file in cckiss/), and return true if we should
+// recompile it. This is the case if any of the following hold:
 //
 // 1. Target file doesn't yet exist.
 //
@@ -260,15 +296,12 @@ std::vector<std::string> get_deps_for_source(
 //    corresponding dependency file was modified.
 //
 // 4. Said dependency file does not exist.
-bool should_recompile_named_file(const std::string& compiled_file_name)
+bool should_recompile_target_file(ArgsRef args)
 {
-    // Deduce the source file that gets compiled to the named target file.
-    std::string source_file_name =
-        source_file_name_from_target(compiled_file_name);
+    auto& compiled_file_name = args.target_file_name;
+    auto& source_file_name = args.source_file_name;
 
     struct timespec target_mtim;
-    struct stat statbuf;
-    int return_code = 0;
     bool compiled_file_exists = false;
 
     // Now we extracted the source file name from the target file
@@ -309,14 +342,14 @@ bool should_recompile_named_file(const std::string& compiled_file_name)
 
         // Check dependency files (possibly including the dependency
         // list file generated by cckiss).
-        auto deps_file_names = get_deps_for_source(source_file_name);
+        auto deps_file_names = get_deps_for_source(args);
         for (const std::string& dep_file_name : deps_file_names) {
             bool dep_exists = file_exists_mtim(dep_file_name, &dep_mtim);
-            if (!dep_exists) {
-                printf("Missing \"%s\", possibly needed by \"%s\".\n",
+            auto firstc = dep_file_name[0];
+            if (!dep_exists && (isalnum(firstc) || firstc == '/')) {
+                printf("Ignoring missing \"%s\", possibly needed by \"%s\".\n",
                     dep_file_name.c_str(),
                     compiled_file_name.c_str());
-                return true;
             }
 
             if (dep_mtim >= target_mtim) {
@@ -332,25 +365,269 @@ bool should_recompile_named_file(const std::string& compiled_file_name)
     }
 }
 
-// Given the name of a source file, preprocess it (storing the
-// preprocessed file under the corresponding directory in "cckiss/"),
-// and scan the preprocessed file for dependency file names (storing
-// the deps file in "cckiss/").
-void preprocess_and_make_deps_file(const std::string& source_file_name)
-{
-    std::string deps_file_name = deps_file_name_for_source(source_file_name);
-    std::string preprocessed_file_name =
-        preprocessed_file_name_for_source(source_file_name);
+int preprocess_source_to_fd(ArgsRef args);
+void make_deps_file_from_fd(ArgsRef args, int fd);
 
-    make_directory_tree_for_source(source_file_name);
+// Look at args for the name of the source file, preprocess it
+// (storing the preprocessed file under the corresponding directory in
+// "cckiss/"), and scan the preprocessed file for dependency file
+// names (storing the deps file in "cckiss/").
+void preprocess_and_make_deps_file(ArgsRef args)
+{
+    make_directory_tree_for_source(args.source_file_name);
+    int fd = preprocess_source_to_fd(args);
+    try {
+        make_deps_file_from_fd(args, fd);
+    }
+    catch (...) {
+        close(fd);
+        throw;
+    }
+
+    close(fd);
 }
 
-int cckiss_main(std::vector<std::string> args)
-{
-    make_directory_tree_for_source(source_file_name_from_target(args[1]));
+// Given the command line args, name of a source file, and the name of
+// the preprocessed file, preprocess the named source file. Returns
+// the file descriptor of the preprocessed file. Assumes that CXX can
+// be run as a preprocessor with '-E' argument, and that it writes the
+// output to stdout (fd 1).
+int preprocess_source_to_fd(ArgsRef args) {
+    // First, open the preprocessor output file.
+    const char* pathname = args.preprocessed_file_name.c_str();
+retry:
+    int fd = open(pathname, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) {
+        if (errno == EINTR) goto retry;
+        const char* msg = strerror(errno);
+        printf("Could not open \"%s\": %s.\n", pathname, msg);
+        fprintf(stderr, "Could not open \"%s\": %s.\n", pathname, msg);
+        exit(1);
+    }
 
-    bool b = should_recompile_named_file(args[1]);
-    printf("%s\n", b ? "yes" : "no");
+    // Convert the std::string args into a list of char pointers.
+    std::vector<const char*> argv;
+    argv.push_back(args.cxx.c_str());
+    for (const auto& arg_string : args.cppargs) {
+        // Vitally important that arg_string is by-reference here.
+        argv.push_back(arg_string.c_str());
+    }
+    static const char _e[] = "-E";
+    argv.push_back(_e);
+    argv.push_back(args.source_file_name.c_str());
+
+    const char* fmt = "%s";
+    for (const char* arg : argv) {
+        printf(fmt, arg);
+        fmt = " %s";
+    }
+    printf("\n");
+    argv.push_back(nullptr);
+
+    auto pid = fork();
+
+    // Error
+    if (pid < 0) {
+        const char* msg = strerror(errno);
+        printf("fork failed: %s.\n", msg);
+        fprintf(stderr, "fork failed: %s.\n", msg);
+        exit(1);
+    }
+    // Child
+    else if (pid == 0) {
+    retry_dup2:
+        auto dup2_code = dup2(fd, 1);
+        if (dup2_code < 0) {
+            if (errno == EINTR) goto retry_dup2;
+            const char* msg = strerror(errno);
+            printf("dup2 failed: %s.\n", msg);
+            fprintf(stderr, "dup2 failed: %s.\n", msg);
+            _exit(1);
+        }
+
+        char** argv_ptr = const_cast<char**>(argv.data());
+        execvp(args.cxx.c_str(), argv_ptr);
+        _exit(2);
+    }
+    // Parent
+    int wstatus;
+    auto waitpid_code = waitpid(pid, &wstatus, 0);
+    if (waitpid_code < 0) {
+        const char* msg = strerror(errno);
+        printf("waitpid failed: %s.\n", msg);
+        fprintf(stderr, "waitpid failed: %s.\n", msg);
+        exit(1);
+    }
+    if (wstatus != 0) {
+        printf("Preprocessing failed: status %i.\n", wstatus);
+        fprintf(stderr, "Preprocessing failed: status %i.\n", wstatus);
+        exit(WEXITSTATUS(wstatus) || 1);
+    }
+    return fd;
+}
+
+// Return true iff the given line_text is a string of the form:
+//
+// [whitespace]#[whitespace][number] "[filename(any str)]"[crud].
+//
+// I could use a regex, but I didn't for now (I don't trust myself to
+// use them correctly). If it is of the correct form, write to
+// *dependency_file_name the contents of the [filename (any str)]
+// space above.
+bool interpret_as_file_directive(
+    ArgsRef args,
+    const std::string& line_text,
+    long line_number,
+    std::string* dependency_file_name)
+{
+    const char* ptr = line_text.c_str();
+    char c = '\0';
+
+    // Expect [whitespace]#[whitespace]. One or both whitespaces may be empty.
+    // The magic do loop skips ptr to point to the first non-whitespace char.
+    do { c = *ptr; } while (isspace(c) && ++ptr);
+    if ( *ptr++ != '#') return false;
+    do { c = *ptr; } while (isspace(c) && ++ptr);
+
+    // Expect number + optional whitespace, and at least one digit.
+    c = *ptr;
+    if (!isdigit(c)) return false;
+    do { c = *ptr; } while (isdigit(c) && ++ptr);
+    do { c = *ptr; } while (isspace(c) && ++ptr);
+
+    // Expect double quote.
+    if (*ptr++ != '"') return false;
+
+    // Copy out the string inside the double quotes.
+    dependency_file_name->clear();
+    while (1) {
+        c = *ptr++;
+        if (c == '"') break;
+        if (c == '\0') goto missing_trailing_quote;
+        *dependency_file_name += c;
+    }
+
+    // Warn for trailing cruft.
+    do { c = *ptr; } while ((isspace(c) || isdigit(c)) && ++ptr);
+    if (c != '\0') {
+        fprintf(
+            stderr,
+            "Suspicious cruft at %s:%li '%s'\n",
+            args.preprocessed_file_name.c_str(),
+            line_number,
+            line_text.c_str());
+    }
+    return true;
+
+missing_trailing_quote:
+    fprintf(
+        stderr,
+        "Ignored %s:%li because of missing '\"' in '%s'\n",
+        args.preprocessed_file_name.c_str(),
+        line_number,
+        line_text.c_str());
+    return false;
+}
+
+// Given the file descriptor of the preprocessed file, scan it for
+// dependency files (using preprocessor directives of the form
+// '# [number] [filename]'). Write the newline-separated list of
+// dependency files to the deps file (named in args).
+void make_deps_file_from_fd(ArgsRef args, int fd)
+{
+    // Rewind the fd.
+    auto lseek_code = lseek(fd, 0, SEEK_SET);
+    if (lseek_code < 0) {
+        const char* msg = strerror(errno);
+        printf("lseek failed: %s.\n", msg);
+        fprintf(stderr, "lseek failed: %s.\n", msg);
+        exit(1);
+    }
+
+    // I'm using old-fashioned manually buffered IO due to stubborness
+    // (I got my brownie points for using ifstream once, now leave me be).
+    char buffer[32768];
+    char* next_char = &buffer[0];
+    char* endptr = next_char;
+    bool eof = false;
+    auto get_char = [fd, &buffer, &next_char, &endptr, &eof] () -> char
+    {
+        if (next_char >= endptr) {
+        retry:
+            auto bytes_read = read(fd, buffer, sizeof buffer);
+            if (bytes_read == 0) {
+                eof = true;
+                return '\n';
+            }
+            else if (bytes_read < 0) {
+                if (errno == EINTR) goto retry;
+                const char* msg = strerror(errno);
+                printf("read preprocessed file failed: %s.\n", msg);
+                fprintf(stderr, "read preprocessed file failed: %s.\n", msg);
+                exit(1);
+            }
+            else {
+                next_char = &buffer[0];
+                endptr = &buffer[bytes_read];
+            }
+        }
+        char c = *next_char++;
+        return c;
+    };
+
+    // Process input line-by-line.
+    long line_number = 0;
+    std::string line_text;
+    auto get_line = [&line_text, &line_number, &get_char, &eof] ()
+    {
+        line_text.clear();
+        ++line_number;
+        while (!eof) {
+            char c = get_char();
+            if (eof || c == '\n') return;
+            else line_text += c;
+        }
+    };
+
+    std::set<std::string> deps_set;
+    std::string dependency_file_name;
+
+    do {
+        get_line();
+        bool was_dependency_line =
+            interpret_as_file_directive(
+                args, line_text, line_number, &dependency_file_name);
+        if (was_dependency_line) {
+            auto pair = deps_set.insert(dependency_file_name);
+            if (pair.second) {
+                printf("    %s:%li\n    \"%s\"\n",
+                    args.preprocessed_file_name.c_str(),
+                    line_number,
+                    dependency_file_name.c_str());
+            }
+        }
+    } while (!eof);
+
+    // TODO: Write dependency file
+}
+
+void compile_to_target(ArgsRef args)
+{
+    // TODO
+}
+
+int cckiss_main(ArgsRef args)
+{
+    bool recompile = should_recompile_target_file(args);
+
+    if (recompile) {
+        preprocess_and_make_deps_file(args);
+        compile_to_target(args);
+    }
+    else {
+        printf("\"%s\": no dependency changes detected.\n",
+            args.target_file_name.c_str());
+    }
 
     return 0;
 }
@@ -359,9 +636,78 @@ int cckiss_main(std::vector<std::string> args)
 
 int main(int argc, char** argv)
 {
-    std::vector<std::string> args;
-    for (int i = 0; i < argc; ++i) {
-        args.emplace_back(argv[i]);
+    std::string cxxargs_delim = ".cckiss.CXXARGS";
+    std::string cppargs_delim = ".cckiss.CPPARGS";
+    std::string cxx_delim = ".cckiss.CXX";
+    std::string delims = cxxargs_delim + " " + cppargs_delim + " " + cxx_delim;
+
+    Args args;
+
+    constexpr int cxxargs_mode = 0, cppargs_mode = 1, cxx_mode = 2;
+    int mode = cxx_mode;
+
+    if (argc >= 2) {
+        args.target_file_name = argv[1];
+    } else {
+        printf("%s: First arg must be target file name.\n", argv[0]);
+        fprintf(stderr, "%s: First arg must be target file name.\n", argv[0]);
+        exit(1);
     }
-    return cckiss_main(std::move(args));
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        if (arg == cxxargs_delim) {
+            mode = cxxargs_mode;
+            continue;
+        }
+        else if (arg == cppargs_delim) {
+            mode = cppargs_mode;
+            continue;
+        }
+        else if (arg == cxx_delim) {
+            mode = cxx_mode;
+            continue;
+        }
+        else if (skip_prefix(arg.c_str(), ".cckiss.") != nullptr) {
+            printf(
+                "%s: Arg \"%s\" should not start with '.cckiss.', "
+                "unless it is a delimeter (%s).\n",
+                argv[0], argv[i], delims.c_str());
+            fprintf(
+                stderr,
+                "%s: Arg \"%s\" should not start with '.cckiss.', "
+                "unless it is a delimeter (%s).\n",
+                argv[0], argv[i], delims.c_str());
+            exit(1);
+        }
+
+        if (mode == cxxargs_mode) {
+            args.cxxargs.push_back(std::move(arg));
+        }
+        else if (mode == cppargs_mode) {
+            args.cppargs.push_back(std::move(arg));
+        }
+        else if (mode == cxx_mode) {
+            args.cxx = std::move(arg);
+        }
+    }
+
+    if (args.cxx == "") {
+        printf(
+            "%s: Blank CC or CXX arg (delim with %s).\n",
+            argv[0], cxx_delim.c_str());
+        fprintf(
+            stderr,
+            "%s: Blank CC or CXX arg (delim with %s).\n",
+            argv[0], cxx_delim.c_str());
+        exit(1);
+    }
+
+    args.source_file_name = source_file_name_from_target(args.target_file_name);
+    args.deps_file_name = deps_file_name_for_source(args.source_file_name);
+    args.preprocessed_file_name =
+        preprocessed_file_name_for_source(args.source_file_name);
+
+    return cckiss_main(args);
 }
