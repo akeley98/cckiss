@@ -608,12 +608,96 @@ void make_deps_file_from_fd(ArgsRef args, int fd)
         }
     } while (!eof);
 
-    // TODO: Write dependency file
+    std::string tmp_deps_file_name = args.deps_file_name + "~";
+
+    // Write all the dependency files to a temp file, then move the
+    // temp file to the dependencies file location.
+retry_open:
+    const char* pathname = tmp_deps_file_name.c_str();
+    fd = open(pathname, O_CREAT|O_TRUNC|O_WRONLY, 0666);
+    if (fd < 0) {
+        if (errno == EINTR) goto retry_open;
+        const char* msg = strerror(errno);
+        printf("Could not open \"%s\": %s\n", pathname, msg);
+        fprintf(stderr, "Could not open \"%s\": %s\n", pathname, msg);
+        exit(1);
+    }
+
+    for (const auto& dep : deps_set) {
+        std::string str_to_write = dep + '\n';
+        const char* ptr = str_to_write.c_str();
+        ssize_t bytes_left = ssize_t(str_to_write.size());
+        ssize_t bytes_written;
+    retry_write:
+        bytes_written = write(fd, ptr, bytes_left);
+        if (bytes_written < 0) {
+            const char* msg = strerror(errno);
+            printf("Could not write to \"%s\": %s\n", pathname, msg);
+            fprintf(stderr, "Could not write to \"%s\": %s\n", pathname, msg);
+            exit(1);
+        }
+        ptr += bytes_written;
+        bytes_left -= bytes_written;
+        if (bytes_left != 0) goto retry_write;
+    }
+
+    auto close_code = close(fd);
+    if (close_code < 0) {
+        const char* msg = strerror(errno);
+        printf("Could not close \"%s\": %s\n", pathname, msg);
+        fprintf(stderr, "Could not close \"%s\": %s\n", pathname, msg);
+        exit(1);
+    }
+
+retry_rename:
+    auto rename_code = rename(pathname, args.deps_file_name.c_str());
+    if (rename_code < 0) {
+        if (errno == EINTR) goto retry_rename;
+        const char* msg = strerror(errno);
+        printf("Could not rename: %s\n", msg);
+        fprintf(stderr, "Could not rename: %s\n", msg);
+        exit(1);
+    }
 }
 
-void compile_to_target(ArgsRef args)
+// Use execvp (replaces current process) to compile the source file to
+// the target file. Detect assembly or object file based on extension, and
+// add -S or -c argument as appropriate.
+void exec_compile_to_target(ArgsRef args)
 {
-    // TODO
+    const char* cxx_arg = args.cxx.c_str();
+    std::vector<const char*> argv;
+    argv.push_back(cxx_arg);
+    for (const auto& arg : args.cxxargs) {
+        argv.push_back(arg.c_str());
+    }
+    argv.push_back(args.source_file_name.c_str());
+
+    // Just check the last character -- more thorough checking was
+    // done during arg parsing.
+    bool is_asm = (args.target_file_name.back() == 's');
+
+    const char _s[] = "-S";
+    const char _c[] = "-c";
+    argv.push_back(is_asm ? _s : _c);
+
+    const char _o[] = "-o";
+    argv.push_back(_o);
+    argv.push_back(args.target_file_name.c_str());
+
+    const char* format = "%s";
+    for (const char* arg : argv) {
+        printf(format, arg);
+        format = " %s";
+    }
+    printf("\n");
+
+    argv.push_back(nullptr);
+    execvp(cxx_arg, const_cast<char**>(argv.data()));
+
+    const char* msg = strerror(errno);
+    printf("Failed to execute compiler: %s\n", msg);
+    fprintf(stderr, "Failed to execute compiler: %s\n", msg);
 }
 
 int cckiss_main(ArgsRef args)
@@ -622,7 +706,7 @@ int cckiss_main(ArgsRef args)
 
     if (recompile) {
         preprocess_and_make_deps_file(args);
-        compile_to_target(args);
+        exec_compile_to_target(args);
     }
     else {
         printf("\"%s\": no dependency changes detected.\n",
