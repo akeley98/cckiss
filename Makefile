@@ -4,19 +4,16 @@ cckiss/cckiss : cckiss/cckiss.cc
 .cckiss.PHONY :
 	@echo -n ""
 
-cckiss/make-B-hack:
-	touch cckiss/make-B-hack
-
-cckiss/%.c.s : .cckiss.PHONY cckiss/cckiss cckiss/make-B-hack
+cckiss/%.c.s : .cckiss.PHONY cckiss/cckiss
 	cckiss/cckiss $@ $(CC) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CARGS)
 
-cckiss/%.c.o : .cckiss.PHONY cckiss/cckiss cckiss/make-B-hack
+cckiss/%.c.o : .cckiss.PHONY cckiss/cckiss
 	cckiss/cckiss $@ $(CC) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CARGS)
 
-cckiss/%.s : .cckiss.PHONY cckiss/cckiss cckiss/make-B-hack
+cckiss/%.s : .cckiss.PHONY cckiss/cckiss
 	cckiss/cckiss $@ $(CXX) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CXXARGS)
 
-cckiss/%.o : .cckiss.PHONY cckiss/cckiss cckiss/make-B-hack
+cckiss/%.o : .cckiss.PHONY cckiss/cckiss
 	cckiss/cckiss $@ $(CXX) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CXXARGS)
 
 cckiss/Makefile:

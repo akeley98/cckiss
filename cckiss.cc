@@ -16,6 +16,11 @@
 #include <utility>
 #include <vector>
 
+#define BLUE "\x1b[1m\x1b[34m"
+#define PURPLE "\x1b[35m\x1b[1m"
+#define CYAN "\x1b[36m\x1b[1m"
+#define END "\x1b[0m"
+
 namespace {
 
 struct Args
@@ -35,16 +40,22 @@ struct Args
     // Makefile CC or CXX
     std::string cxx;
 
+    // Name of a dependency file whose change triggered recompilation.
+    // Filled in later; if empty and (re)compiling is done, the compilation
+    // was caused by some other reason (e.g. target never was compiled)
+    std::string changed_dependency_name;
+
     // Makefile CPPARGS
     std::vector<std::string> cppargs;
 
     // Makefile CARGS or CXXARGS
     std::vector<std::string> cxxargs;
 
-    bool verbose;
+    bool verbose = false;
+    bool always_make = false;
 };
 
-using ArgsRef = const Args&;
+using ArgsRef = Args&;
 
 // Arguably evil, but allow timespecs to be compared like ordinary
 // darn numbers.
@@ -222,7 +233,6 @@ bool try_parse_deps_file(ArgsRef args, std::vector<std::string>* out)
 {
     auto& deps = *out;
     deps.clear();
-    deps.push_back("cckiss/make-B-hack"); // TODO: document
     auto& source_file_name = args.source_file_name;
     auto& deps_file_name = args.deps_file_name;
 
@@ -268,7 +278,7 @@ bool try_parse_deps_file(ArgsRef args, std::vector<std::string>* out)
 
     std::string dep_file_name;
 
-    do {
+    while (1) {
         std::getline(stream, dep_file_name, '\n');
         if (stream.eof()) return true;
         if (stream.bad()) {
@@ -276,15 +286,17 @@ bool try_parse_deps_file(ArgsRef args, std::vector<std::string>* out)
                 stderr,
                 "Internal error: ifstream badbit set for \"%s\".\n",
                 deps_file_name.c_str());
+            exit(1);
         }
         if (stream.fail()) {
             fprintf(
                 stderr,
                 "Internal error: ifstream failbit set for \"%s\".\n",
                 deps_file_name.c_str());
+            exit(1);
         }
         deps.push_back(std::move(dep_file_name));
-    } while (1);
+    }
 }
 
 // Look at args for the name of the target file (compiled
@@ -340,6 +352,7 @@ bool should_recompile_target_file(ArgsRef args)
                 "\"%s\" modified, needed by \"%s\".\n",
                 source_file_name.c_str(),
                 compiled_file_name.c_str());
+            args.changed_dependency_name = source_file_name;
             return true;
         }
 
@@ -362,6 +375,7 @@ bool should_recompile_target_file(ArgsRef args)
                 printf("Dependency \"%s\" modified; needed by \"%s\".\n",
                     dep_file_name.c_str(),
                     compiled_file_name.c_str());
+                args.changed_dependency_name = dep_file_name;
                 return true;
             }
         }
@@ -518,7 +532,7 @@ bool interpret_as_file_directive(
     if (c != '\0') {
         fprintf(
             stderr,
-            "Suspicious cruft at %s:%li '%s'\n",
+            PURPLE "Suspicious cruft at %s:%li '%s'\n" END,
             args.preprocessed_file_name.c_str(),
             line_number,
             line_text.c_str());
@@ -528,7 +542,7 @@ bool interpret_as_file_directive(
 missing_trailing_quote:
     fprintf(
         stderr,
-        "Ignored %s:%li because of missing '\"' in '%s'\n",
+        PURPLE "Ignored %s:%li because of missing '\"' in '%s'\n" END,
         args.preprocessed_file_name.c_str(),
         line_number,
         line_text.c_str());
@@ -704,18 +718,32 @@ void exec_compile_to_target(ArgsRef args)
     const char* msg = strerror(errno);
     printf("Failed to execute compiler: %s\n", msg);
     fprintf(stderr, "Failed to execute compiler: %s\n", msg);
+    exit(1);
 }
 
 int cckiss_main(ArgsRef args)
 {
-    bool recompile = should_recompile_target_file(args);
+    bool recompile = args.always_make || should_recompile_target_file(args);
 
     if (recompile) {
         preprocess_and_make_deps_file(args);
+
+        std::string reason =
+            args.always_make ? "-B passed to make" :
+            args.changed_dependency_name.size() == 0 ? "not yet built" :
+            ("change in " BLUE ) + args.changed_dependency_name + END;
+        fprintf(stderr,
+            "Compiling " BLUE "%s" END "; %s\n",
+            args.target_file_name.c_str(),
+            reason.c_str());
+
         exec_compile_to_target(args);
     }
     else {
         printf("\"%s\": no dependency changes detected.\n",
+            args.target_file_name.c_str());
+        fprintf(stderr,
+            "Up to date: " CYAN "%s\n" END,
             args.target_file_name.c_str());
     }
 
@@ -735,6 +763,14 @@ int main(int argc, char** argv)
 
     const char* verbose_str = getenv("VERBOSE");
     args.verbose = verbose_str != nullptr && atoll(verbose_str) != 0;
+
+    const char* makeargs_str = getenv("MAKEFLAGS");
+    while (makeargs_str && *makeargs_str != '\0') {
+        switch (*makeargs_str++) {
+            case 'd': args.verbose = true; break;
+            case 'B': args.always_make = true; break;
+        }
+    }
 
     constexpr int cxxargs_mode = 0, cppargs_mode = 1, cxx_mode = 2;
     int mode = cxx_mode;
