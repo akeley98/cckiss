@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#define RED "\x1b[1m\x1b[31m"
 #define BLUE "\x1b[1m\x1b[34m"
 #define PURPLE "\x1b[35m\x1b[1m"
 #define CYAN "\x1b[36m\x1b[1m"
@@ -343,7 +344,7 @@ bool should_recompile_target_file(ArgsRef args)
                 source_file_name.c_str());
             fprintf(
                 stderr,
-                "Missing needed source file \"%s\".\n",
+                "Missing needed source file " RED "%s\n" END,
                 source_file_name.c_str());
             exit(1);
         }
