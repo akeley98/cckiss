@@ -1,13 +1,13 @@
 # Keep It Simple Stupid C/C++ build dependency tool
 
 cckiss is a tool that automatically tracks the dependencies of C and
-C++ files and recompiles them if any changes are detected. cckiss is
-designed to supplement a Unix makefile, rather than replace `make`
-entirely. cckiss provides patterns that automate away the task of
-writing these kinds of makefile entries:
+C++ files and recompiles them if any source or dependency changes are
+detected. cckiss is designed to supplement a Unix makefile, rather
+than replace `make` entirely. cckiss provides patterns that automate
+away the task of writing these kinds of makefile entries:
 
-    bin/foo.o foo.c foo.h bar.h xyzzy.h
-            $(CC) $(CARGS) $(CPPARGS) foo.c -c -o bin/foo.o
+    bin/foo.o: foo.c foo.h bar.h xyzzy.h
+            $(CC) $(CFLAGS) $(CPPFLAGS) foo.c -c -o bin/foo.o
 
 This automation eliminates a whole class of errors related to
 forgetting a (possibly indirectly) included header in the list
@@ -24,7 +24,8 @@ Include `cckiss/Makefile` in your `Makefile`:
 object files named `cckiss/`source-file-path`.o` (or `.s`, if you
 prefer to compile to assembly), so you only have to provide a rule for
 linking all objects together. The variables `CPPFLAGS`, `CC`,
-`CFLAGS`, `CXX`, and `CXXFLAGS` are supported in the standard way.
+`CFLAGS`, `CXX`, `CXXFLAGS`, and `MAKEFLAGS` are supported in the
+standard way.
 
 As an example, if your program contains two source files,
 `src/peach.c++` and `src/util.c`, cckiss expects to compile them to
@@ -119,6 +120,50 @@ had to do was preprocess the file, grep out a list of header
 dependencies, and check for modifications in the listed files to know
 if a recompilation is needed.  Stupid Simple, what was I waiting for?
 
-# Example Walkthrough
-
 # Implementation
+
+Everything is powered by the `cckiss/cckiss` executable, built by the
+provided makefile from `cckiss/cckiss.cc` (C is for cookie...) This
+executable is targetted by C/C++ patterns like:
+
+    cckiss/%.c.s : .cckiss.PHONY cckiss/cckiss
+	    cckiss/cckiss $@ $(CC) .cckiss.CPPFLAGS $(CPPFLAGS) .cckiss.CXXFLAGS $(CFLAGS)
+
+When called for the first time on a target file, `cckiss/cckiss` strips away
+the `cckiss/` prefix and `.o` (or `.s`) suffix to recover the path to
+the source file to be compiled. It then
+
+1. Preprocesses the source file, storing it in
+`cckiss/`path-to-source`.i` (or `.ii`, for C++ files). This step uses the
+makefile variables `CPPFLAGS` and `CC` (or `CXX` for C++ files).
+
+2. Scans the preprocessed file for a list of dependency files (using the
+`# [line-number] [file-name]` directives). This list of dependency
+files is stored in `cckiss/`path-to-source`-deps.txt`. Each file listed
+is separated with exactly 1 newline, with exactly 0 or 1 trailing newlines
+in the file. I considered it unlikely that any source file path would contain
+a newline (how could such a file be included under C syntax rules?) However,
+the newlines could be replaced with `'\0'` if this is a real problem.
+
+3. Compile the preprocessed source file to create the target object or
+assembly file. This uses the makefile variables `CC` and `CFLAGS` for
+C files, `CXX` and `CXXFLAGS` for C++.
+
+4. Future invokations of `cckiss/cckiss` on the same target file look
+up the `-deps.txt` file, and skip recompilation if all listed files
+have modification times before the modification time of the target file.
+However, if `B` is in the environment variable `MAKEFLAGS`, recompilation
+is done unconditionally, for consistency with `make`.
+
+# TODO (consider)
+
+The `-deps.txt` files include a lot of system headers. Consider providing an
+option that allows skipping checks for such dependencies.
+
+There's no way to tailor `CFLAGS` and `CXXFLAGS` per-file. This could
+be useful, for example, to provide flags like `-Ofast` or
+`-funroll-loops` that may be needed for certain performance-critical
+files but are otherwise unsafe for general use. Could this be done by
+allowing meta-data in source files (e.g. a `CCKISS_ARG` preprocessor
+macro), or by providing a separate args file (e.g. `foo.c.cckiss` for
+`foo.c`)?

@@ -35,6 +35,7 @@
 // 4. The preprocessed file is scanned for preprocessor directives of the
 // form "# [line number] "[included file name]"". This gives us a list of
 // all dependency files, which is stored in "cckiss/[source file]-deps.txt".
+// Exactly one newline separates each file listed.
 //
 // 5. Future invokations of cckiss can check that list of dependency files,
 // and skip recompilation if all dependency files' modification times are
