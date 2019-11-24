@@ -529,6 +529,9 @@ retry:
 
         char** argv_ptr = const_cast<char**>(argv.data());
         execvp(args.cxx.c_str(), argv_ptr);
+        const char* msg = strerror(errno);
+        printf("Execute %s failed: %s.\n", args.cxx.c_str(), msg);
+        fprintf(stderr, "Execute %s failed: %s.\n", args.cxx.c_str(), msg);
         _exit(2);
     }
     // Parent
@@ -543,6 +546,12 @@ retry:
     if (wstatus != 0) {
         printf("Preprocessing failed: status %i.\n", wstatus);
         fprintf(stderr, "Preprocessing failed: status %i.\n", wstatus);
+        if (args.cppflags.size() == 0) {
+            fprintf(stderr,
+                "The " RED "CPPFLAGS" END " variable was empty.\n"
+                "Did you forget to specify include directories (-I)?\n"
+                "(Or did you put them in CFLAGS or CXXFLAGS instead?)\n");
+        }
         exit(WEXITSTATUS(wstatus) || 1);
     }
     return fd;
