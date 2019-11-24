@@ -13,6 +13,8 @@ This automation eliminates a whole class of errors related to
 forgetting a (possibly indirectly) included header in the list
 of dependencies.
 
+Licensed under your choice of CC0 and WTFPL.
+
 # Quick Start
 
 Clone `cckiss` into the directory where your top-level `Makefile` is.
