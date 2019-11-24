@@ -5,16 +5,16 @@ cckiss/cckiss : cckiss/cckiss.cc
 	@echo -n ""
 
 cckiss/%.c.s : .cckiss.PHONY cckiss/cckiss
-	cckiss/cckiss $@ $(CC) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CARGS)
+	cckiss/cckiss $@ $(CC) .cckiss.CPPFLAGS $(CPPFLAGS) .cckiss.CXXFLAGS $(CFLAGS)
 
 cckiss/%.c.o : .cckiss.PHONY cckiss/cckiss
-	cckiss/cckiss $@ $(CC) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CARGS)
+	cckiss/cckiss $@ $(CC) .cckiss.CPPFLAGS $(CPPFLAGS) .cckiss.CXXFLAGS $(CFLAGS)
 
 cckiss/%.s : .cckiss.PHONY cckiss/cckiss
-	cckiss/cckiss $@ $(CXX) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CXXARGS)
+	cckiss/cckiss $@ $(CXX) .cckiss.CPPFLAGS $(CPPFLAGS) .cckiss.CXXFLAGS $(CXXFLAGS)
 
 cckiss/%.o : .cckiss.PHONY cckiss/cckiss
-	cckiss/cckiss $@ $(CXX) .cckiss.CPPARGS $(CPPARGS) .cckiss.CXXARGS $(CXXARGS)
+	cckiss/cckiss $@ $(CXX) .cckiss.CPPFLAGS $(CPPFLAGS) .cckiss.CXXFLAGS $(CXXFLAGS)
 
 cckiss/Makefile:
 	@echo -n ""

@@ -11,17 +11,18 @@
 // 1. This program takes as its first argument the name of a target
 // file to compile. The target file name should be of the form
 // "cckiss/[source file].[s|o]", where [source file] is the path to
-// the C or C++ file that compiles to the target. Further arguments
+// the C or C++ file that compiles to the target. Anything with a .c
+// extension is assumed to be C; all others C++. Further arguments
 // control:
 //
 //     a. The C/C++ compiler name (prefix with ".cckiss.CXX", or first
 //     argument after target filename).
 //
 //     b. Arguments for invoking the compiler as a preprocessor
-//     (prefix with ".cckiss.CPPARGS")
+//     (prefix with ".cckiss.CPPFLAGS")
 //
 //     c. Arguments for invoking the compiler (prefix with
-//     ".cckiss.CXXARGS", even if we are using a C compiler). Note:
+//     ".cckiss.CXXFLAGS", even if we are using a C compiler). Note:
 //     '-c' or '-S' need not be included: it will be added
 //     automatically depending on whether the target file is an object
 //     (.o) or assembly (.s) file.
@@ -89,11 +90,11 @@ struct Args
     // was caused by some other reason (e.g. target never was compiled)
     std::string changed_dependency_name;
 
-    // Makefile CPPARGS
-    std::vector<std::string> cppargs;
+    // Makefile CPPFLAGS
+    std::vector<std::string> cppflags;
 
-    // Makefile CARGS or CXXARGS
-    std::vector<std::string> cxxargs;
+    // Makefile CFLAGS or CXXFLAGS
+    std::vector<std::string> cxxflags;
 
     bool verbose = false;
     bool always_make = false;
@@ -472,7 +473,7 @@ retry:
     // Convert the std::string args into a list of char pointers.
     std::vector<const char*> argv;
     argv.push_back(args.cxx.c_str());
-    for (const auto& arg_string : args.cppargs) {
+    for (const auto& arg_string : args.cppflags) {
         // Vitally important that arg_string is by-reference here.
         argv.push_back(arg_string.c_str());
     }
@@ -732,7 +733,7 @@ void exec_compile_to_target(ArgsRef args)
     const char* cxx_arg = args.cxx.c_str();
     std::vector<const char*> argv;
     argv.push_back(cxx_arg);
-    for (const auto& arg : args.cxxargs) {
+    for (const auto& arg : args.cxxflags) {
         argv.push_back(arg.c_str());
     }
     argv.push_back(args.preprocessed_file_name.c_str());
@@ -798,10 +799,10 @@ int cckiss_main(ArgsRef args)
 
 int main(int argc, char** argv)
 {
-    std::string cxxargs_delim = ".cckiss.CXXARGS";
-    std::string cppargs_delim = ".cckiss.CPPARGS";
+    std::string cxxflags_delim = ".cckiss.CXXFLAGS";
+    std::string cppflags_delim = ".cckiss.CPPFLAGS";
     std::string cxx_delim = ".cckiss.CXX";
-    std::string delims = cxxargs_delim + " " + cppargs_delim + " " + cxx_delim;
+    std::string delims = cxxflags_delim + " " + cppflags_delim + " " + cxx_delim;
 
     Args args;
 
@@ -816,7 +817,7 @@ int main(int argc, char** argv)
         }
     }
 
-    constexpr int cxxargs_mode = 0, cppargs_mode = 1, cxx_mode = 2;
+    constexpr int cxxflags_mode = 0, cppflags_mode = 1, cxx_mode = 2;
     int mode = cxx_mode;
 
     if (argc >= 2) {
@@ -830,12 +831,12 @@ int main(int argc, char** argv)
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
 
-        if (arg == cxxargs_delim) {
-            mode = cxxargs_mode;
+        if (arg == cxxflags_delim) {
+            mode = cxxflags_mode;
             continue;
         }
-        else if (arg == cppargs_delim) {
-            mode = cppargs_mode;
+        else if (arg == cppflags_delim) {
+            mode = cppflags_mode;
             continue;
         }
         else if (arg == cxx_delim) {
@@ -855,11 +856,11 @@ int main(int argc, char** argv)
             exit(1);
         }
 
-        if (mode == cxxargs_mode) {
-            args.cxxargs.push_back(std::move(arg));
+        if (mode == cxxflags_mode) {
+            args.cxxflags.push_back(std::move(arg));
         }
-        else if (mode == cppargs_mode) {
-            args.cppargs.push_back(std::move(arg));
+        else if (mode == cppflags_mode) {
+            args.cppflags.push_back(std::move(arg));
         }
         else if (mode == cxx_mode) {
             args.cxx = std::move(arg);
