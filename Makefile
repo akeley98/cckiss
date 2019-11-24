@@ -1,5 +1,5 @@
 cckiss/cckiss : cckiss/cckiss.cc
-	$(CXX) -std=c++14 -O2 -Wall -Wextra cckiss/cckiss.cc -o cckiss/cckiss
+	$(CXX) -std=c++14 -O2 cckiss/cckiss.cc -o cckiss/cckiss -Wall -Wextra -Wno-constant-logical-operand -Wno-unused-function
 
 .cckiss.PHONY :
 	@echo -n ""
