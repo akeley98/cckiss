@@ -17,6 +17,8 @@ Licensed under your choice of CC0 and WTFPL.
 
 # Quick Start
 
+(A more substantial tutorial is provided in `cckiss_EXAMPLE/README.md`)
+
 Clone `cckiss` into the directory where your top-level `Makefile` is.
 Include `cckiss/Makefile` in your `Makefile`:
 

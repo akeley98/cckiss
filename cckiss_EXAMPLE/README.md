@@ -44,14 +44,14 @@ $ make
 g++ -std=c++14 -O2 cckiss/cckiss.cc -o cckiss/cckiss -Wall -Wextra -Wno-constant-logical-operand -Wno-unused-function
 cckiss/cckiss cckiss/main.cc.o g++ .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
 New target file "cckiss/main.cc.o".
-g++ -I include -E main.cc
-Compiling <b>cckiss/main.cc.o</b>; not yet built
+g++ -I include -E main.cct
+Compiling <b><i>cckiss/main.cc.o</i></b>; not yet built
 g++ -O3 -Wall -Wextra cckiss/main.cc.ii -c -o cckiss/main.cc.o
 cckiss/cckiss cckiss/shtuff/hello.c.s cc .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
 New target file "cckiss/shtuff/hello.c.s".
 Created directory "cckiss/shtuff/".
 cc -I include -E shtuff/hello.c
-Compiling <b>cckiss/shtuff/hello.c.s</b>; not yet built
+Compiling <b><i>cckiss/shtuff/hello.c.s</i></b>; not yet built
 cc -O3 -Wall -Wextra cckiss/shtuff/hello.c.i -S -o cckiss/shtuff/hello.c.s
 g++ cckiss/main.cc.o cckiss/shtuff/hello.c.s -o main
 $ ./main
@@ -60,7 +60,8 @@ Gadget #3 named Robot
 </pre>
 
 The first time `make` is run, `cckiss` itself gets compiled, and both
-object files are compiled for the first time.
+object files are compiled for the first time, using a C++ compiler
+for `main.cc` and C for `shtuff/hello.c`.
 
 If we run `make` again, `cckiss` correctly observes that no
 recompilation is needed:
@@ -69,10 +70,10 @@ recompilation is needed:
 $ make
 cckiss/cckiss cckiss/main.cc.o g++ .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
 "cckiss/main.cc.o": no dependency changes detected.
-Up to date: <b>cckiss/main.cc.o</b>
+Up to date: <b><i>cckiss/main.cc.o</i></b>
 cckiss/cckiss cckiss/shtuff/hello.c.s cc .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
 "cckiss/shtuff/hello.c.s": no dependency changes detected.
-Up to date: <b>cckiss/shtuff/hello.c.s</b>
+Up to date: <b><i>cckiss/shtuff/hello.c.s</i></b>
 </pre>
 
 Now modify `include/config.h`. Set `config_shout` to `1`:
@@ -81,3 +82,91 @@ Now modify `include/config.h`. Set `config_shout` to `1`:
 
 Run `make` again:
 
+<pre>
+$ make
+cckiss/cckiss cckiss/main.cc.o g++ .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
+Dependency "include/config.h" modified; needed by "cckiss/main.cc.o".
+g++ -I include -E main.cc
+Compiling <b><i>cckiss/main.cc.o</i></b>; change in <b><i>include/config.h</i></b>
+g++ -O3 -Wall -Wextra cckiss/main.cc.ii -c -o cckiss/main.cc.o
+cckiss/cckiss cckiss/shtuff/hello.c.s cc .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
+Dependency "include/config.h" modified; needed by "cckiss/shtuff/hello.c.s".
+cc -I include -E shtuff/hello.c
+Compiling <b><i>cckiss/shtuff/hello.c.s</i></b>; change in <b><i>include/config.h</i></b>
+cc -O3 -Wall -Wextra cckiss/shtuff/hello.c.i -S -o cckiss/shtuff/hello.c.s
+g++ cckiss/main.cc.o cckiss/shtuff/hello.c.s -o main
+</pre>
+
+cckiss correctly detects that both files include `include/config.h` --
+directly by `shtuff/hello.c`, and indirectly by `main.cc` through
+`include/gadget.hpp`. If we rerun `./main`,
+
+    $ ./main
+    HELLO, CCKISS!!!
+    GADGET #3 NAMED ROBOT
+
+We see that the changes have taken effect.
+
+Now let's add a new file to the project. Create a file
+`shtuff/goodbye.c`:
+
+    $ cat > shtuff/goodbye.c
+    const char* goodbye() {
+            return "怎么又是你?";
+    }
+
+with corresponding header `include/goodbye.h`:
+
+    $ cat > include/goodbye.h
+    #ifndef CCKISS_EXAMPLE_GOODBYE_H
+    #define CCKISS_EXAMPLE_GOODBYE_H
+
+    #ifdef __cplusplus
+    extern "C"
+    #endif
+    const char* goodbye();
+
+    #endif
+
+Call `goodbye` in `main.cc`:
+
+...
+    #include "goodbye.h"
+...
+    std::cout << goodbye() << '\n';
+...
+
+And finally, add `cckiss/shtuff/goodbye.c.o` to the list of objects
+to be linked together in the `Makefile`:
+
+<pre>
+OBJECTS=cckiss/main.cc.o cckiss/shtuff/hello.c.s <b><i>cckiss/shtuff/goodbye.c.o</i></b>
+main: $(OBJECTS)
+	$(CXX) $(OBJECTS) -o main
+</pre>
+
+When we re-`make`, the result is as expected. The new file, and the
+modified `main.cc` files are compiled, but the unchanged `hello.c` is
+not:
+
+<pre>
+$ make
+cckiss/cckiss cckiss/main.cc.o g++ .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
+"main.cc" modified, needed by "cckiss/main.cc.o".
+g++ -I include -E main.cc
+Compiling <b><i>cckiss/main.cc.o</i></b>; change in <b><i>main.cc</i></b>
+g++ -O3 -Wall -Wextra cckiss/main.cc.ii -c -o cckiss/main.cc.o
+cckiss/cckiss cckiss/shtuff/hello.c.s cc .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
+"cckiss/shtuff/hello.c.s": no dependency changes detected.
+Up to date: <b><i>cckiss/shtuff/hello.c.s</i></b>
+cckiss/cckiss cckiss/shtuff/goodbye.c.o cc .cckiss.CPPFLAGS -I include .cckiss.CXXFLAGS -O3 -Wall -Wextra
+New target file "cckiss/shtuff/goodbye.c.o".
+cc -I include -E shtuff/goodbye.c
+Compiling <b><i>cckiss/shtuff/goodbye.c.o</i></b>; not yet built
+cc -O3 -Wall -Wextra cckiss/shtuff/goodbye.c.i -c -o cckiss/shtuff/goodbye.c.o
+g++ cckiss/main.cc.o cckiss/shtuff/hello.c.s cckiss/shtuff/goodbye.c.o -o main
+$ ./main
+HELLO, CCKISS!!!
+GADGET #3 NAMED ROBOT
+怎么又是你?
+</pre>
