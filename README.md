@@ -21,7 +21,7 @@ Include `cckiss/Makefile` in your `Makefile`:
     -include cckiss/Makefile
 
 `cckiss/Makefile` provides patterns that compile source files to
-object files named `cckiss/`source-file-path`.o` (or `.s`, if you
+object files named `cckiss/[source-file-path].o` (or `.s`, if you
 prefer to compile to assembly), so you only have to provide a rule for
 linking all objects together. The variables `CPPFLAGS`, `CC`,
 `CFLAGS`, `CXX`, `CXXFLAGS`, and `MAKEFLAGS` are supported in the
@@ -114,11 +114,13 @@ already does that work for us. There's already a ton of directives like
     # 561 "include/mediocre.h"
 
 and we can just piggyback off them to know EXACTLY what headers a
-certain source file depends on. So, this cckiss tool (which I've been
-dreaming of for years) turned out to be really simple to write: all I
-had to do was preprocess the file, grep out a list of header
-dependencies, and check for modifications in the listed files to know
-if a recompilation is needed.  Stupid Simple, what was I waiting for?
+certain source file depends on (even with bizarre nested conditional
+includes controlled by preprocessor directives). So, this cckiss tool
+(which I've been dreaming of for years) turned out to be really simple
+to write: all I had to do was preprocess the file, grep out a list of
+header dependencies, and check for modifications in the listed files
+to know if a recompilation is needed.  Stupid Simple, what was I
+waiting for?
 
 # Implementation
 
@@ -134,12 +136,12 @@ the `cckiss/` prefix and `.o` (or `.s`) suffix to recover the path to
 the source file to be compiled. It then
 
 1. Preprocesses the source file, storing it in
-`cckiss/`path-to-source`.i` (or `.ii`, for C++ files). This step uses the
+`cckiss/[path-to-source].i` (or `.ii`, for C++ files). This step uses the
 makefile variables `CPPFLAGS` and `CC` (or `CXX` for C++ files).
 
 2. Scans the preprocessed file for a list of dependency files (using the
 `# [line-number] [file-name]` directives). This list of dependency
-files is stored in `cckiss/`path-to-source`-deps.txt`. Each file listed
+files is stored in `cckiss/[path-to-source]-deps.txt`. Each file listed
 is separated with exactly 1 newline, with exactly 0 or 1 trailing newlines
 in the file. I considered it unlikely that any source file path would contain
 a newline (how could such a file be included under C syntax rules?) However,
