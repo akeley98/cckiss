@@ -107,6 +107,21 @@ directly by `shtuff/hello.c`, and indirectly by `main.cc` through
 
 We see that the changes have taken effect.
 
+# cckiss directory
+
+If we look in the `cckiss` directory again, we see that `cckiss` has
+replicated the project tree within it:
+
+    $ ls cckiss
+    cckiss  cckiss.cc  main.cc-deps.txt  main.cc.ii  main.cc.o  Makefile  shtuff
+    $ ls cckiss/shtuff
+    hello.c-deps.txt  hello.c.i  hello.c.s
+
+The `.i` and `.ii` files are preprocessed source files, which `cckiss` scans
+for a list of dependency files, stored in the `-deps.txt` files.
+
+# Adding New Source Files
+
 Now let's add a new file to the project. Create a file
 `shtuff/goodbye.c`:
 
