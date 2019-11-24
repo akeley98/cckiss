@@ -131,9 +131,13 @@ with corresponding header `include/goodbye.h`:
 Call `goodbye` in `main.cc`:
 
 ...
+
     #include "goodbye.h"
+
 ...
+
     std::cout << goodbye() << '\n';
+
 ...
 
 And finally, add `cckiss/shtuff/goodbye.c.o` to the list of objects
