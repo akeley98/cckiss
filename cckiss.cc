@@ -364,10 +364,38 @@ bool should_recompile_target_file(ArgsRef args)
 
     struct timespec target_mtim;
     bool compiled_file_exists = false;
+    struct timespec dep_mtim;
 
-    // Now we extracted the source file name from the target file
-    // name, and we just have to see if either the source file or any
-    // of its dependency files changed after the last compilation.
+    // Check that the required source file exists, and get its
+    // modification time. We do this first to provide a warning if the
+    // source file doesn't exist (instead of failing mysteriously in
+    // the preprocessing stage).
+    bool source_exists = file_exists_mtim(source_file_name, &dep_mtim);
+    if (!source_exists) {
+        printf(
+            "Missing needed source file \"%s\".\n",
+            source_file_name.c_str());
+        fprintf(
+            stderr,
+            "Missing needed source file " RED "%s\n" END,
+            source_file_name.c_str());
+        bool has_file_extension = false;
+        for (char c : source_file_name) has_file_extension |= (c == '.');
+
+        if (!has_file_extension) {
+            fprintf(stderr,
+                "Did you mean to build cckiss/%s" RED ".c" END ".%c or "
+                "something instead of %s?\n",
+                source_file_name.c_str(),
+                compiled_file_name.back(),
+                compiled_file_name.c_str());
+        }
+        exit(1);
+    }
+
+    // Extract the modification time of the target file (if it
+    // exists). Later, compare this modification time with the
+    // modification times of the dependency files.
     compiled_file_exists =
         file_exists_mtim(compiled_file_name, &target_mtim);
 
@@ -380,19 +408,7 @@ bool should_recompile_target_file(ArgsRef args)
         // Otherwise, compare the dependency modification times with the
         // target file modification time.
 
-        // Source file (required).
-        struct timespec dep_mtim;
-        bool source_exists = file_exists_mtim(source_file_name, &dep_mtim);
-        if (!source_exists) {
-            printf(
-                "Missing needed source file \"%s\".\n",
-                source_file_name.c_str());
-            fprintf(
-                stderr,
-                "Missing needed source file " RED "%s\n" END,
-                source_file_name.c_str());
-            exit(1);
-        }
+        // Check source file (dep_mtim should have been filled in earlier).
         if (dep_mtim >= target_mtim) {
             printf(
                 "\"%s\" modified, needed by \"%s\".\n",
@@ -534,7 +550,7 @@ retry:
 
 // Return true iff the given line_text is a string of the form:
 //
-// [whitespace]#[whitespace][number] "[filename(any str)]"[crud].
+//     [whitespace]#[whitespace][number] "[filename(any str)]"[crud]
 //
 // I could use a regex, but I didn't for now (I don't trust myself to
 // use them correctly). If it is of the correct form, write to
