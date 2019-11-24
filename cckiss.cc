@@ -1,3 +1,46 @@
+// By David Zhao Akeley (dza724`at`gmail.com / akeley98`at`g.ucla.edu) 2019
+// Released under dual license: your choice of
+//
+// 1. Creative Commons CC0 license ("No Rights Reserved")
+//    https://creativecommons.org/publicdomain/zero/1.0/legalcode
+//
+// 2. Do What the Fuck You Want to Public License http://www.wtfpl.net/about/
+//
+// Summary:
+//
+// 1. This program takes as its first argument the name of a target
+// file to compile. The target file name should be of the form
+// "cckiss/[source file].[s|o]", where [source file] is the path to
+// the C or C++ file that compiles to the target. Further arguments
+// control:
+//
+//     a. The C/C++ compiler name (prefix with ".cckiss.CXX", or first
+//     argument after target filename).
+//
+//     b. Arguments for invoking the compiler as a preprocessor
+//     (prefix with ".cckiss.CPPARGS")
+//
+//     c. Arguments for invoking the compiler (prefix with
+//     ".cckiss.CXXARGS", even if we are using a C compiler). Note:
+//     '-c' or '-S' need not be included: it will be added
+//     automatically depending on whether the target file is an object
+//     (.o) or assembly (.s) file.
+//
+// 2. If the target need not be recompiled, the program terminates. Otherwise,
+//
+// 3. The source file is preprocessed, with the preprocessor output stored in
+// "cckiss/[source file].[i|ii]" (extension differs for C/C++).
+//
+// 4. The preprocessed file is scanned for preprocessor directives of the
+// form "# [line number] "[included file name]"". This gives us a list of
+// all dependency files, which is stored in "cckiss/[source file]-deps.txt".
+//
+// 5. Future invokations of cckiss can check that list of dependency files,
+// and skip recompilation if all dependency files' modification times are
+// before the timestamp of the target file. (However, recompilation is done
+// unconditionally if 'B' is in the environment variable 'MAKEFLAGS'. This
+// is for compatibility with make's -B argument).
+
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
