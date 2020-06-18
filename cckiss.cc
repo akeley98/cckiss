@@ -101,8 +101,6 @@ struct Args
     bool always_make = false;
 };
 
-using ArgsRef = Args&;
-
 // Arguably evil, but allow timespecs to be compared like ordinary
 // darn numbers.
 inline bool operator< (struct timespec left, struct timespec right) {
@@ -258,7 +256,7 @@ void make_directory_tree_for_source(const std::string& source_file_name)
                     goto fail;
                 }
             } else {
-                printf("Created directory \"%s\".\n", pathname);
+                printf("# Created directory \"%s\".\n", pathname);
             }
         }
     }
@@ -275,7 +273,7 @@ fail:
 // (newline separated in deps file). Iff the dependency file doesn't
 // yet exist, return false. If the dependency file cannot be read for
 // any other reason, terminate.
-bool try_parse_deps_file(ArgsRef args, std::vector<std::string>* out)
+bool try_parse_deps_file(Args& args, std::vector<std::string>* out)
 {
     auto& deps = *out;
     deps.clear();
@@ -357,7 +355,7 @@ bool try_parse_deps_file(ArgsRef args, std::vector<std::string>* out)
 //    corresponding dependency file was modified.
 //
 // 4. Said dependency file does not exist.
-bool should_recompile_target_file(ArgsRef args)
+bool should_recompile_target_file(Args& args)
 {
     auto& compiled_file_name = args.target_file_name;
     auto& source_file_name = args.source_file_name;
@@ -373,7 +371,7 @@ bool should_recompile_target_file(ArgsRef args)
     bool source_exists = file_exists_mtim(source_file_name, &dep_mtim);
     if (!source_exists) {
         printf(
-            "Missing needed source file \"%s\".\n",
+            "# Missing needed source file \"%s\".\n",
             source_file_name.c_str());
         fprintf(
             stderr,
@@ -401,7 +399,7 @@ bool should_recompile_target_file(ArgsRef args)
 
     // If the target file doesn't exist yet, we obviously must compile.
     if (!compiled_file_exists) {
-        printf("New target file \"%s\".\n", compiled_file_name.c_str());
+        printf("# New target file \"%s\".\n", compiled_file_name.c_str());
         return true;
     }
     else {
@@ -411,7 +409,7 @@ bool should_recompile_target_file(ArgsRef args)
         // Check source file (dep_mtim should have been filled in earlier).
         if (dep_mtim >= target_mtim) {
             printf(
-                "\"%s\" modified, needed by \"%s\".\n",
+                "# \"%s\" modified, needed by \"%s\".\n",
                 source_file_name.c_str(),
                 compiled_file_name.c_str());
             args.changed_dependency_name = source_file_name;
@@ -425,16 +423,27 @@ bool should_recompile_target_file(ArgsRef args)
         if (!has_deps_file) return true;
 
         for (const std::string& dep_file_name : deps_file_names) {
+            // Skip blank lines, lines starting with '<', and ending with '/'.
+            // This is random cruft that compilers stick in. TODO
+            if (dep_file_name.size() == 0) continue;
+            if (dep_file_name.front() == '<' || dep_file_name.back() == '/') {
+                if (args.verbose) {
+                    printf("# Ignoring file name \"%s\"\n",
+                        dep_file_name.c_str());
+                }
+                continue;
+            }
+
             bool dep_exists = file_exists_mtim(dep_file_name, &dep_mtim);
-            auto firstc = dep_file_name[0];
-            if (!dep_exists && (isalnum(firstc) || firstc == '/')) {
-                printf("Ignoring missing \"%s\", possibly needed by \"%s\".\n",
+            if (!dep_exists) {
+                printf("# Ignoring missing \"%s\", "
+                    "possibly needed by \"%s\".\n",
                     dep_file_name.c_str(),
                     compiled_file_name.c_str());
             }
 
             if (dep_mtim >= target_mtim) {
-                printf("Dependency \"%s\" modified; needed by \"%s\".\n",
+                printf("# Dependency \"%s\" modified; needed by \"%s\".\n",
                     dep_file_name.c_str(),
                     compiled_file_name.c_str());
                 args.changed_dependency_name = dep_file_name;
@@ -447,14 +456,14 @@ bool should_recompile_target_file(ArgsRef args)
     }
 }
 
-int preprocess_source_to_fd(ArgsRef args);
-void make_deps_file_from_fd(ArgsRef args, int fd);
+int preprocess_source_to_fd(Args& args);
+void make_deps_file_from_fd(Args& args, int fd);
 
 // Look at args for the name of the source file, preprocess it
 // (storing the preprocessed file under the corresponding directory in
 // "cckiss/"), and scan the preprocessed file for dependency file
 // names (storing the deps file in "cckiss/").
-void preprocess_and_make_deps_file(ArgsRef args)
+void preprocess_and_make_deps_file(Args& args)
 {
     make_directory_tree_for_source(args.source_file_name);
     int fd = preprocess_source_to_fd(args);
@@ -474,7 +483,7 @@ void preprocess_and_make_deps_file(ArgsRef args)
 // the file descriptor of the preprocessed file. Assumes that CXX can
 // be run as a preprocessor with '-E' argument, and that it writes the
 // output to stdout (fd 1).
-int preprocess_source_to_fd(ArgsRef args) {
+int preprocess_source_to_fd(Args& args) {
     // First, open the preprocessor output file.
     const char* pathname = args.preprocessed_file_name.c_str();
 retry:
@@ -490,8 +499,11 @@ retry:
     // Convert the std::string args into a list of char pointers.
     std::vector<const char*> argv;
     argv.push_back(args.cxx.c_str());
-    for (const auto& arg_string : args.cppflags) {
+    for (const auto& arg_string : args.cxxflags) {
         // Vitally important that arg_string is by-reference here.
+        argv.push_back(arg_string.c_str());
+    }
+    for (const auto& arg_string : args.cppflags) {
         argv.push_back(arg_string.c_str());
     }
     static const char _e[] = "-E";
@@ -506,6 +518,8 @@ retry:
     printf("\n");
     argv.push_back(nullptr);
 
+    fflush(stdout);
+    fflush(stderr);
     auto pid = fork();
 
     // Error
@@ -566,7 +580,7 @@ retry:
 // *dependency_file_name the contents of the [filename (any str)]
 // space above.
 bool interpret_as_file_directive(
-    ArgsRef args,
+    Args& args,
     const std::string& line_text,
     long line_number,
     std::string* dependency_file_name)
@@ -624,7 +638,7 @@ missing_trailing_quote:
 // dependency files (using preprocessor directives of the form
 // '# [number] [filename]'). Write the newline-separated list of
 // dependency files to the deps file (named in args).
-void make_deps_file_from_fd(ArgsRef args, int fd)
+void make_deps_file_from_fd(Args& args, int fd)
 {
     // Rewind the fd.
     auto lseek_code = lseek(fd, 0, SEEK_SET);
@@ -754,7 +768,7 @@ retry_rename:
 // Use execvp (replaces current process) to compile the preprocessed
 // source file to the target file. Detect assembly or object file
 // based on extension, and add -S or -c argument as appropriate.
-void exec_compile_to_target(ArgsRef args)
+void exec_compile_to_target(Args& args)
 {
     const char* cxx_arg = args.cxx.c_str();
     std::vector<const char*> argv;
@@ -784,6 +798,8 @@ void exec_compile_to_target(ArgsRef args)
     printf("\n");
 
     argv.push_back(nullptr);
+    fflush(stdout);
+    fflush(stderr);
     execvp(cxx_arg, const_cast<char**>(argv.data()));
 
     const char* msg = strerror(errno);
@@ -792,8 +808,10 @@ void exec_compile_to_target(ArgsRef args)
     exit(1);
 }
 
-int cckiss_main(ArgsRef args)
+int cckiss_main(Args& args)
 {
+    setbuf(stdout, nullptr);
+    setbuf(stderr, nullptr);
     bool recompile = args.always_make || should_recompile_target_file(args);
 
     if (recompile) {
@@ -811,13 +829,34 @@ int cckiss_main(ArgsRef args)
         exec_compile_to_target(args);
     }
     else {
-        printf("\"%s\": no dependency changes detected.\n",
+        printf("#\"%s\": no dependency changes detected.\n",
             args.target_file_name.c_str());
         fprintf(stderr,
             "Up to date: " CYAN "%s\n" END,
             args.target_file_name.c_str());
     }
 
+    return 0;
+}
+
+// Fake main used for rtags (rc -c -). Basically, print out a compile
+// command that would have the same effect if cckiss were run for
+// real, minus the intermediate preprocess stage (which confuses
+// rtags).
+int cckiss_rtags_main(Args& args)
+{
+    printf("%s", args.cxx.c_str());
+    for (std::string& arg : args.cppflags) {
+        printf(" %s", arg.c_str());
+    }
+    for (std::string& arg : args.cxxflags) {
+        printf(" %s", arg.c_str());
+    }
+    bool is_asm = (args.target_file_name.back() == 's');
+    printf(is_asm ? " -S" : " -c");
+
+    printf(" %s -o %s\n",
+        args.source_file_name.c_str(), args.target_file_name.c_str());
     return 0;
 }
 
@@ -909,5 +948,14 @@ int main(int argc, char** argv)
     args.preprocessed_file_name =
         preprocessed_file_name_for_source(args.source_file_name);
 
-    return cckiss_main(args);
+    if (getenv("CCKISS_RTAGS_PRINT")) {
+        if (args.verbose) {
+            fprintf(stderr, "Only printing compile command due "
+                            "to CCKISS_RTAGS_PRINT env variable.\n");
+        }
+        return cckiss_rtags_main(args);
+    }
+    else {
+        return cckiss_main(args);
+    }
 }
